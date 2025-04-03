@@ -150,7 +150,7 @@ impl BasePlugin {
                     r#type: plugin_type,
                     description: plugin_description,
                     host: "localhost".to_string(), // 默认值
-                    port: 50052, // 默认值
+                    port: 19090, // 默认值
                 });
                 
                 // 发送注册请求

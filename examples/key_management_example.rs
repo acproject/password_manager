@@ -4,7 +4,6 @@ use password_manager::{
     persistence::DbPersistence,
     plugin_config::PluginConfig,
     plugin_sdk::PluginSDK,
-    base_plugin::plugin,
 };
 use std::collections::HashMap;
 use std::env;
@@ -50,10 +49,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     config.set_plugin_name("密钥管理插件".to_string());
     config.set_plugin_version("0.0.1".to_string());
     config.set_plugin_type("key_management".to_string());
+    config.set_plugin_description("密钥管理服务".to_string()); // 确保设置描述
+    
+    // 简化额外配置，确保端口一致性
+    config.add_config("plugin.host".to_string(), "localhost".to_string());
+    config.add_config("plugin.port".to_string(), "19090".to_string()); // 确保与服务器端口一致
+    config.add_config("register_retry".to_string(), "10".to_string()); // 增加重试次数
+    config.add_config("register_timeout".to_string(), "60".to_string()); // 增加注册超时时间
     
     // 简化额外配置，避免重复和冲突
     config.add_config("plugin.host".to_string(), "localhost".to_string());
-    config.add_config("plugin.port".to_string(), "50052".to_string());
+    config.add_config("plugin.port".to_string(), "19090".to_string());
     config.add_config("register_retry".to_string(), "5".to_string());
     
     println!("正在创建插件实例...");
@@ -66,6 +72,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 在这里保存配置信息，用于后续打印
     let server_host = config.get_server_host().to_string();
     let server_port = config.get_server_port();
+    
+    // 初始化插件前，手动设置一个插件ID用于测试
+    config.set_plugin_id(format!("key_management_{}", uuid::Uuid::new_v4())); // 添加唯一ID
     
     // 初始化插件
     if !plugin.initialize(config.clone()).await {
@@ -88,7 +97,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
     // 使用更长的超时时间
     let start_result = tokio::time::timeout(
-        tokio::time::Duration::from_secs(30),
+        tokio::time::Duration::from_secs(60), // 增加到60秒超时
         plugin.start()
     ).await;
     
@@ -114,6 +123,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tokio::spawn(async move {
         // 先等待一段时间，让插件有机会完成注册
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        
+        // 尝试手动注册一次
+        let mut plugin = plugin_clone.lock().await;
+        let plugin_id = plugin.get_info().get_id().to_string();
+        
+        if plugin_id.is_empty() {
+            println!("检测到插件ID为空，尝试手动注册...");
+            // 这里可以添加手动注册逻辑，如果您有相关API
+            // 例如: plugin.register().await;
+        }
+        
+        // 释放锁，避免死锁
+        drop(plugin);
         
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         loop {
