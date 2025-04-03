@@ -11,6 +11,9 @@ pub struct PluginConfig {
     plugin_type: String,
     plugin_description: String, // 添加插件描述字段
     additional_config: HashMap<String, String>,
+    pub(crate) name: String,
+    supported_commands: Vec<String>, // 修改为具体类型 Vec<String>
+    supported_events: Vec<String>,   // 修改为具体类型 Vec<String>
 }
 
 impl PluginConfig {
@@ -20,10 +23,13 @@ impl PluginConfig {
             server_port: 0,
             plugin_id: String::new(),
             plugin_name: String::new(),
-            plugin_version: String::new(),
             plugin_type: String::new(),
-            plugin_description: String::new(), // 初始化插件描述
-            additional_config: HashMap::new(),
+            plugin_version: String::new(),
+            plugin_description: String::new(),
+            additional_config: HashMap::new(), // 添加缺失的字段
+            supported_commands: Vec::new(),
+            supported_events: Vec::new(),
+            name: String::new(),
         }
     }
 

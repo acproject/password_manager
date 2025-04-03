@@ -1,5 +1,6 @@
-use dataapi_plugin_sdk::{ExamplePlugin, PluginConfig, PluginSDK};
+
 use std::error::Error;
+use password_manager::{ExamplePlugin, PluginConfig, PluginSDK};
 use tokio::signal;
 
 #[tokio::main]
@@ -7,7 +8,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 创建插件配置
     let mut config = PluginConfig::new();
     config.set_server_host("localhost".to_string());
-    config.set_server_port(50051);
+    config.set_server_port(19090);
     config.set_plugin_name("示例插件".to_string());
     config.set_plugin_version("1.0.0".to_string());
     config.set_plugin_type("example".to_string());

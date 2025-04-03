@@ -1,5 +1,4 @@
 use password_manager::{
-    base_plugin::BasePlugin,
     key_management::KeyManagementPlugin,
     key_management::security::security_module::MockHSM,
     persistence::DbPersistence,
