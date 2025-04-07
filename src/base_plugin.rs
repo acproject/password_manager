@@ -63,6 +63,7 @@ impl BasePlugin {
         Ok(PluginServiceClient::new(channel))
     }
 
+    // 1. 修复 heartbeat_loop 函数，添加缺失的变量定义
     async fn heartbeat_loop(
         plugin_id: String,
         status: String,
@@ -70,9 +71,21 @@ impl BasePlugin {
         mut shutdown_rx: mpsc::Receiver<()>,
         server_host: String,
         server_port: i32,
+        retry_registration: bool, // 添加重试注册标志
+        plugin_name: String,      // 添加插件信息
+        plugin_version: String,
+        plugin_type: String,
+        plugin_description: String,
+        host_address: String,
+        plugin_grpc_port: i32,
     ) {
         let endpoint = format!("http://{}:{}", server_host, server_port);
         println!("心跳线程启动，连接到: {}", endpoint);
+        
+        // 添加注册重试标志和计数器
+        let mut _registration_retried = false; // 添加下划线前缀表示有意不使用
+        let mut retry_count = 0;
+        let max_retries = 3; // 最大重试次数
         
         loop {
             tokio::select! {
@@ -98,6 +111,8 @@ impl BasePlugin {
                             {
                                 Ok(channel) => {
                                     let mut client = PluginServiceClient::new(channel);
+                                    
+                                    // 发送心跳
                                     let request = tonic::Request::new(HeartbeatRequest {
                                         plugin_id: plugin_id.clone(),
                                         status_info: status.clone(),
@@ -106,6 +121,43 @@ impl BasePlugin {
                                     match client.heartbeat(request).await {
                                         Ok(_) => {
                                             println!("心跳发送成功");
+                                            
+                                            // 如果需要重试注册且尚未达到最大重试次数
+                                            if retry_registration && retry_count < max_retries && plugin_id.contains("-") {
+                                                println!("心跳成功，尝试重新注册插件 (尝试 {}/{})", retry_count + 1, max_retries);
+                                                retry_count += 1;
+                                                
+                                                // 创建完整的注册请求
+                                                let request = tonic::Request::new(PluginRegistration {
+                                                    name: plugin_name.clone(),
+                                                    version: plugin_version.clone(),
+                                                    r#type: plugin_type.clone(),
+                                                    description: plugin_description.clone(),
+                                                    host: host_address.clone(),
+                                                    port: plugin_grpc_port,
+                                                });
+                                                
+                                                println!("重新发送注册请求: name={}, version={}, type={}, description={}, host={}, port={}",
+                                                         plugin_name, plugin_version, plugin_type, plugin_description, host_address, plugin_grpc_port);
+                                                
+                                                // 直接发送注册请求，不使用timeout包装
+                                                match client.register_plugin(request).await {
+                                                    Ok(response) => {
+                                                        let response = response.into_inner();
+                                                        if response.success {
+                                                            println!("插件重新注册成功: {}", response.message);
+                                                            println!("新插件ID: {}", response.plugin_id);
+                                                            _registration_retried = true; // 使用修改后的变量名
+                                                            retry_count = max_retries; // 不再重试
+                                                        } else {
+                                                            eprintln!("插件重新注册失败: {}", response.message);
+                                                        }
+                                                    },
+                                                    Err(e) => {
+                                                        eprintln!("插件重新注册失败: {}", e);
+                                                    }
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             eprintln!("心跳发送失败: {}", e);
@@ -145,6 +197,8 @@ impl BasePlugin {
         let plugin_version;
         let plugin_description;
         let plugin_type;
+        let host_address;
+        let plugin_grpc_port;
         
         // 使用作用域来限制不可变借用
         {
@@ -155,6 +209,16 @@ impl BasePlugin {
             plugin_version = self.info.get_version().to_string();
             plugin_description = self.info.get_description().to_string();
             plugin_type = self.info.get_type().to_string();
+            
+            // 获取本地主机地址
+            host_address = config.get_config("host_address")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "localhost".to_string());
+                
+            // 获取插件的gRPC端口
+            plugin_grpc_port = config.get_config("plugin_grpc_port")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(19091); // 默认使用19091作为插件自身的gRPC端口
         }
         
         // 创建连接字符串
@@ -166,72 +230,55 @@ impl BasePlugin {
             Ok(mut client) => {
                 println!("gRPC客户端创建成功，准备发送注册请求");
                 
-                // 创建一个极简的注册请求
+                // 创建完整的注册请求，确保与SysPlugin.java中的字段一致
                 let request = Request::new(PluginRegistration {
                     name: plugin_name.clone(),
                     version: plugin_version.clone(),
                     r#type: plugin_type.clone(),
-                    description: "".to_string(), // 使用空描述
-                    host: "".to_string(), // 使用空字符串
-                    port: 0, // 使用0端口
+                    description: plugin_description.clone(), // 使用完整描述
+                    host: host_address.clone(), // 设置主机地址
+                    port: plugin_grpc_port, // 设置插件自身的gRPC端口
                 });
                 
-                println!("发送极简注册请求: name={}, version={}, type={}", 
-                         plugin_name, plugin_version, plugin_type);
+                println!("发送注册请求: name={}, version={}, type={}, description={}, host={}, port={}",
+                         plugin_name, plugin_version, plugin_type, plugin_description, host_address, plugin_grpc_port);
                 
-                // 发送注册请求，使用更短的超时时间
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(3), // 减少超时时间，快速失败
-                    client.register_plugin(request)
-                ).await {
-                    Ok(result) => match result {
-                        Ok(response) => {
-                            let response = response.into_inner();
-                            if response.success {
-                                println!("插件注册成功: {}", response.message);
-                                
-                                // 更新配置中的注册状态
-                                if let Some(config) = &mut self.config {
-                                    config.set_plugin_id(response.plugin_id.clone());
-                                }
-                                self.info.set_id(response.plugin_id.clone());
-                                
-                                return true;
-                            } else {
-                                eprintln!("插件注册失败: {}", response.message);
-                                // 生成本地ID
-                                use uuid::Uuid;
-                                let local_id = Uuid::new_v4().to_string();
-                                self.info.set_id(local_id.clone());
-                                if let Some(config) = &mut self.config {
-                                    config.set_plugin_id(local_id);
-                                }
-                                println!("生成本地插件ID: {}", self.info.get_id());
-                                return true;
+                // 直接发送注册请求，不使用timeout包装
+                match client.register_plugin(request).await {
+                    Ok(response) => {
+                        let response = response.into_inner();
+                        if response.success {
+                            println!("插件注册成功: {}", response.message);
+                            
+                            // 更新配置中的注册状态
+                            if let Some(config) = &mut self.config {
+                                config.set_plugin_id(response.plugin_id.clone());
                             }
-                        },
-                        Err(e) => {
-                            eprintln!("插件注册失败: {}", e);
-                            eprintln!("错误详情: {:?}", e);
+                            self.info.set_id(response.plugin_id.clone());
+                            
+                            return true;
+                        } else {
+                            eprintln!("插件注册失败: {}", response.message);
                             // 生成本地ID
                             use uuid::Uuid;
                             let local_id = Uuid::new_v4().to_string();
                             self.info.set_id(local_id.clone());
                             if let Some(config) = &mut self.config {
-                                config.set_plugin_id(local_id);
+                                config.set_plugin_id(local_id.clone()); // 添加 clone() 以避免移动
                             }
                             println!("生成本地插件ID: {}", self.info.get_id());
                             return true;
                         }
                     },
-                    Err(_) => {
-                        eprintln!("注册请求超时，服务器可能没有响应");
+                    Err(e) => {
+                        eprintln!("插件注册失败: {}", e);
+                        eprintln!("错误详情: {:?}", e);
                         // 生成本地ID
                         use uuid::Uuid;
                         let local_id = Uuid::new_v4().to_string();
                         self.info.set_id(local_id.clone());
                         if let Some(config) = &mut self.config {
-                            config.set_plugin_id(local_id);
+                            config.set_plugin_id(local_id.clone()); // 添加 clone()
                         }
                         println!("生成本地插件ID: {}", self.info.get_id());
                         return true;
@@ -245,9 +292,9 @@ impl BasePlugin {
                 let local_id = Uuid::new_v4().to_string();
                 self.info.set_id(local_id.clone());
                 if let Some(config) = &mut self.config {
-                    config.set_plugin_id(local_id);
+                    config.set_plugin_id(local_id.clone()); // 添加 clone() 以避免移动
                 }
-                println!("生成本地插件ID: {}", self.info.get_id());
+                println!("生成本地插件ID: {}", local_id);
                 return true;
             }
         }
@@ -363,24 +410,24 @@ impl PluginSDK for BasePlugin {
             *guard = true;
             true
         };
-
+    
         if !is_running {
             return false;
         }
-
+    
         // 创建一个配置的副本，避免后面的借用冲突
         let config_clone = match &self.config {
             Some(config) => config.clone(),
             None => return false,
         };
-
+    
         // 尝试注册插件
         println!("尝试注册插件...");
-        if !self.register_with_server().await {
-            eprintln!("插件注册失败，无法启动");
-            return false;
-        }
-
+        let registration_success = self.register_with_server().await;
+        
+        // 如果注册失败，我们将在心跳中重试
+        let retry_registration = !registration_success || self.info.get_id().contains("-");
+    
         // 如果插件ID为空，生成一个本地ID
         if self.info.get_id().is_empty() {
             use uuid::Uuid;
@@ -391,17 +438,32 @@ impl PluginSDK for BasePlugin {
             }
             println!("生成本地插件ID: {}", local_id);
         }
-
+    
         // 启动心跳线程
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         self.shutdown_tx = Some(shutdown_tx);
-
+    
         let plugin_id = self.info.get_id().to_string();
         let status = self.info.get_status().to_string();
         let running = Arc::clone(&self.running);
         let server_host = config_clone.get_server_host().to_string();
         let server_port = config_clone.get_server_port();
-
+    
+        // 添加插件信息用于重新注册
+        let plugin_name = self.info.get_name().to_string();
+        let plugin_version = self.info.get_version().to_string();
+        let plugin_type = self.info.get_type().to_string();
+        let plugin_description = self.info.get_description().to_string();
+    
+        // 获取主机地址和端口
+        let host_address = config_clone.get_config("host_address")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "localhost".to_string());
+            
+        let plugin_grpc_port = config_clone.get_config("plugin_grpc_port")
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(19091);
+    
         let handle = tokio::spawn(async move {
             Self::heartbeat_loop(
                 plugin_id,
@@ -410,13 +472,20 @@ impl PluginSDK for BasePlugin {
                 shutdown_rx,
                 server_host,
                 server_port,
+                retry_registration,
+                plugin_name,
+                plugin_version,
+                plugin_type,
+                plugin_description,
+                host_address,
+                plugin_grpc_port,
             )
             .await;
         });
-
+    
         self.heartbeat_handle = Some(handle);
         println!("插件已启动，ID: {}", self.info.get_id());
-
+    
         true
     }
 
