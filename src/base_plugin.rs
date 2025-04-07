@@ -15,6 +15,7 @@ use crate::plugin_sdk::PluginSDK;
 
 // 导入生成的protobuf代码
 pub mod plugin {
+    // 移除不正确的 cfg 条件
     tonic::include_proto!("plugin");
 }
 
@@ -144,6 +145,7 @@ impl BasePlugin {
                                                 match client.register_plugin(request).await {
                                                     Ok(response) => {
                                                         let response = response.into_inner();
+                                                        
                                                         if response.success {
                                                             println!("插件重新注册成功: {}", response.message);
                                                             println!("新插件ID: {}", response.plugin_id);
