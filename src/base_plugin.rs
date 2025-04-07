@@ -287,12 +287,23 @@ impl BasePlugin {
     
     // 添加重试注册方法
     pub async fn retry_register(&mut self) -> Result<(), String> {
+        // 增加默认重试次数到5次
         let max_retries = match &self.config {
             Some(config) => config.get_config("register_retry")
-                .map(|s| s.parse::<u32>().unwrap_or(3))
+                .map(|s| s.parse::<u32>().unwrap_or(5))
+                .unwrap_or(5),
+            None => 5, // 默认值从3增加到5
+        };
+            
+        // 增加重试间隔，从2秒增加到3秒
+        let retry_interval = match &self.config {
+            Some(config) => config.get_config("register_retry_interval")
+                .map(|s| s.parse::<u64>().unwrap_or(3))
                 .unwrap_or(3),
             None => 3, // 默认值
         };
+        
+        println!("开始注册插件，最大尝试次数: {}，重试间隔: {}秒", max_retries, retry_interval);
             
         for i in 0..max_retries {
             println!("尝试注册插件 (尝试 {}/{})", i+1, max_retries);
@@ -303,10 +314,29 @@ impl BasePlugin {
                 return Ok(());
             }
             
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            // 最后一次尝试后不需要等待
+            if i < max_retries - 1 {
+                println!("注册失败，{}秒后重试...", retry_interval);
+                tokio::time::sleep(tokio::time::Duration::from_secs(retry_interval)).await;
+            }
         }
         
-        Err("注册失败，已达到最大重试次数".to_string())
+        // 即使注册失败，我们仍然可以以本地模式运行
+        println!("注册失败，已达到最大重试次数 {}，将以本地模式运行", max_retries);
+        
+        // 确保我们有一个有效的本地ID
+        if self.info.get_id().is_empty() {
+            use uuid::Uuid;
+            let local_id = Uuid::new_v4().to_string();
+            self.info.set_id(local_id.clone());
+            if let Some(config) = &mut self.config {
+                config.set_plugin_id(local_id.clone());
+            }
+            println!("生成本地插件ID: {}", local_id);
+        }
+        
+        // 返回Ok而不是Err，因为我们可以以本地模式运行
+        Ok(())
     }
 }
 
