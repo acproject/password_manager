@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait = "0.1.52"
 tokio = { version = "1.15.0", features = ["full"] }
-tonic = "0.12.2"
+tonic = { version = "0.13.0", features = ["transport"] }
 prost = "0.13"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.16", features = ["v4", "serde"] }
@@ -17,10 +17,16 @@ base64 = "0.22"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid", "json", "migrate"] }
 # 添加 syn 依赖并启用所需特性
 syn = { version = "1.0", features = ["full", "parsing", "printing", "derive", "proc-macro"] }
+reqwest = { version = "0.12.15", features = ["json"] }
+grpc = "0.8.3"
 
 [build-dependencies]
-tonic-build = "0.12.2"
+tonic-build = "0.13.0"
 
 [[example]]
 name = "key_management_example"
 path = "examples/key_management_example.rs"
+
+[[example]]
+name = "test_grpc_connection"
+path = "examples/test_grpc_connection.rs"
